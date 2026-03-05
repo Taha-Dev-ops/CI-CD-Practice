@@ -12,19 +12,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Debug - System Info
-      run: |
-        echo "=== PATH ==="
-        echo $PATH
-        echo "=== jq location ==="
-        which jq
-        echo "=== jq version ==="
-        jq --version
-        echo "=== Current user ==="
-        whoami
-        echo "=== Home dir ==="
-        ls -la ~/
-
     - name: SonarQube Scan
       uses: sonarsource/sonarqube-scan-action@v2
       env:
@@ -35,8 +22,38 @@ jobs:
           -Dsonar.projectKey=CI-CD-Practice
           -Dsonar.sources=.
 
-    - name: Quality Gate Check
-      uses: sonarsource/sonarqube-quality-gate-action@v1
-      timeout-minutes: 5
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    - name: Wait for analysis and get Quality Gate
+      run: |
+        # Wait for SonarQube to process
+        sleep 10
+
+        # Get task ID from scanner report
+        TASK_ID=$(cat .scannerwork/report-task.txt | grep ceTaskId | cut -d= -f2)
+        echo "Task ID: $TASK_ID"
+
+        # Check quality gate status
+        for i in {1..30}; do
+          STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/ce/task?id=$TASK_ID" | jq -r .task.status)
+          echo "Status: $STATUS"
+
+          if [ "$STATUS" = "SUCCESS" ]; then
+            QG_STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/qualitygates/project_status?projectKey=CI-CD-Practice" | jq -r .projectStatus.status)
+            echo "Quality Gate: $QG_STATUS"
+
+            if [ "$QG_STATUS" != "OK" ]; then
+              echo "❌ Quality Gate Failed: $QG_STATUS"
+              exit 1
+            else
+              echo "✅ Quality Gate Passed"
+              exit 0
+            fi
+          elif [ "$STATUS" = "FAILED" ]; then
+            echo "❌ Analysis Failed"
+            exit 1
+          fi
+
+          sleep 5
+        done
+
+        echo "❌ Timeout waiting for analysis"
+        exit 1
