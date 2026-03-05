@@ -12,6 +12,13 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: List all files (debug)
+      run: |
+        echo "=== All files in repo ==="
+        ls -la
+        echo "=== JavaScript files ==="
+        find . -name "*.js" -type f
+
     - name: SonarQube Scan
       uses: sonarsource/sonarqube-scan-action@v2
       env:
@@ -21,23 +28,47 @@ jobs:
         args: >
           -Dsonar.projectKey=CI-CD-Practice
           -Dsonar.sources=.
+          -Dsonar.inclusions=**/*.js,**/*.html,**/*.css
+          -Dsonar.javascript.file.suffixes=.js
+          -Dsonar.sourceEncoding=UTF-8
+          -Dsonar.exclusions=**/node_modules/**,**/test/**
+          -Dsonar.verbose=true
 
     - name: Wait for analysis and get Quality Gate
       run: |
         # Wait for SonarQube to process
-        sleep 10
+        echo "Waiting for analysis to complete..."
+        sleep 15
+
+        # Check if scannerwork directory exists
+        if [ ! -d ".scannerwork" ]; then
+          echo "❌ .scannerwork directory not found! Scan may have failed."
+          exit 1
+        fi
 
         # Get task ID from scanner report
+        if [ ! -f ".scannerwork/report-task.txt" ]; then
+          echo "❌ report-task.txt not found! Scan may have failed."
+          exit 1
+        fi
+
         TASK_ID=$(cat .scannerwork/report-task.txt | grep ceTaskId | cut -d= -f2)
         echo "Task ID: $TASK_ID"
 
         # Check quality gate status
-        for i in {1..30}; do
+        for i in {1..60}; do
           STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/ce/task?id=$TASK_ID" | jq -r .task.status)
-          echo "Status: $STATUS"
+          echo "Status: $STATUS (attempt $i/60)"
 
           if [ "$STATUS" = "SUCCESS" ]; then
-            QG_STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/qualitygates/project_status?projectKey=CI-CD-Practice" | jq -r .projectStatus.status)
+            # Get full project status
+            PROJECT_STATUS=$(curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/qualitygates/project_status?projectKey=CI-CD-Practice")
+            QG_STATUS=$(echo "$PROJECT_STATUS" | jq -r .projectStatus.status)
+
+            # Get condition details
+            echo "=== Quality Gate Details ==="
+            echo "$PROJECT_STATUS" | jq '.projectStatus.conditions'
+            echo "==========================="
             echo "Quality Gate: $QG_STATUS"
 
             if [ "$QG_STATUS" != "OK" ]; then
@@ -49,11 +80,13 @@ jobs:
             fi
           elif [ "$STATUS" = "FAILED" ]; then
             echo "❌ Analysis Failed"
+            # Get error details
+            curl -s -u ${{ secrets.SONAR_TOKEN }}: "http://192.168.88.131:9000/api/ce/task?id=$TASK_ID" | jq .
             exit 1
           fi
 
-          sleep 5
+          sleep 10
         done
 
-        echo "❌ Timeout waiting for analysis"
+        echo "❌ Timeout waiting for analysis after 10 minutes"
         exit 1
