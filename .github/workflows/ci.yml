@@ -1,4 +1,4 @@
-name: CI Pipeline with SonarQube (Self-hosted)
+name: CI Pipeline with SonarQube (Production Mode)
 
 on:
   push:
@@ -21,3 +21,9 @@ jobs:
         args: >
           -Dsonar.projectKey=CI-CD-Practice
           -Dsonar.sources=.
+
+    - name: Quality Gate Check
+      uses: sonarsource/sonarqube-quality-gate-action@v1
+      timeout-minutes: 5
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
